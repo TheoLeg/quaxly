@@ -92,23 +92,28 @@ class Help(commands.Cog):
             discord.Embed(
                 color=0x47E0FF,
                 title="War stats commands",
-                description="this section is about stats on played tracks in war, using <@177162177432649728> (Toad) Quaxly will automatically track stats on each track for you (each channel counts as a different team and only people that have access to the channel can see the stats of the channel)",
+                description="this section is about stats on played tracks in war, using <@177162177432649728> (Toad) Quaxly will automatically track stats on each track for you (each channel or thread counts as a different team and only people that have access to it can see its stats)",
             )
         )
 
         embeds[-1].add_field(
             name="war list",
-            value="```/war list (channel)```show the list of recorded wars with their IDs for the selected channel (if no channel is provided it will use the current one)",
+            value="```/war list (channel)```show the list of recorded wars with their IDs for the selected channel or thread (if none is provided it will use the current one)",
             inline=False,
         )
         embeds[-1].add_field(
             name="war delete",
-            value="```/war delete (channel) (war_id)```let you delete a war (or all of them if you do not provide a war id), for the selected channel (or the current one if no channel is provided)",
+            value="```/war delete (channel) (war_id)```let you delete a war (or all of them if you do not provide a war id), for the selected channel or thread (or the current one if none is provided)",
             inline=False,
         )
         embeds[-1].add_field(
             name="war stats",
-            value="```/war stats (channel) (minimum) (track) (team)```show the stats for each track from best to worst in the selected channel (if no channel is provided it will use the current one), minimum is the minimum times a track needs to be played to count in the stats (default to 1), track is an option to view stats from one track only, team lets you filter by a specific team tag",
+            value="```/war stats (channel) (minimum) (track) (team)```show the stats for each track from best to worst in the selected channel or thread (if none is provided it will use the current one), minimum is the minimum times a track needs to be played to count in the stats (default to 1), track is an option to view stats from one track only, team lets you filter by a specific team tag",
+            inline=False,
+        )
+        embeds[-1].add_field(
+            name="war copy",
+            value="```/war copy source destination```copy all war stats from one channel or thread to another (source data is kept untouched), useful to migrate stats when reorganizing channels into threads, requires manage messages permission in both source and destination",
             inline=False,
         )
 

@@ -168,7 +168,7 @@ class WarStats(Base):
     async def stats(
         self,
         interaction: discord.Interaction,
-        channel: discord.TextChannel = None,
+        channel: discord.TextChannel | discord.Thread = None,
         minimum: app_commands.Range[int, 1] = 1,
         track: str = None,
         team: str = None,
@@ -268,7 +268,9 @@ class WarStats(Base):
     @app_commands.guild_only()
     @app_commands.describe(channel="the channel you want to check wars from")
     async def warlist(
-        self, interaction: discord.Interaction, channel: discord.TextChannel = None
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel | discord.Thread = None,
     ):
         """list all wars in the channel"""
 
@@ -324,13 +326,112 @@ class WarStats(Base):
     @app_commands.command()
     @app_commands.guild_only()
     @app_commands.describe(
+        source="the channel/thread to copy war stats from",
+        destination="the channel/thread to copy war stats to",
+    )
+    async def copy(
+        self,
+        interaction: discord.Interaction,
+        source: discord.TextChannel | discord.Thread,
+        destination: discord.TextChannel | discord.Thread,
+    ):
+        """copy all war stats from one channel/thread to another"""
+
+        if source.id == destination.id:
+            return await interaction.response.send_message(
+                content="source and destination must be different", ephemeral=True
+            )
+
+        member = interaction.user
+        for ch in (source, destination):
+            perms = ch.permissions_for(member)
+            if not perms.view_channel:
+                return await interaction.response.send_message(
+                    content=f"you don't have access to {ch.mention}",
+                    ephemeral=True,
+                )
+            if not perms.manage_messages:
+                return await interaction.response.send_message(
+                    content=f"you need manage messages permission in {ch.mention}",
+                    ephemeral=True,
+                )
+
+        with get_db_session() as session:
+            war_count = (
+                session.query(WarEvent)
+                .filter(WarEvent.channel_id == source.id)
+                .count()
+            )
+
+            if war_count == 0:
+                return await interaction.response.send_message(
+                    content=f"no war stats found in {source.mention}",
+                    ephemeral=True,
+                )
+
+            embed = discord.Embed(
+                color=0x47E0FF,
+                title="Copy War Stats",
+                description=f"You are about to copy **{war_count}** wars from {source.mention} to {destination.mention}",
+            )
+
+        view = ConfirmButton()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await view.wait()
+
+        if view.answer:
+            with get_db_session() as session:
+                war_events = (
+                    session.query(WarEvent)
+                    .options(joinedload(WarEvent.races))
+                    .filter(WarEvent.channel_id == source.id)
+                    .all()
+                )
+
+                for war_event in war_events:
+                    new_war = WarEvent(
+                        game=war_event.game,
+                        channel_id=destination.id,
+                        date=war_event.date,
+                        tag=war_event.tag,
+                        enemy_tag=war_event.enemy_tag,
+                        incoming_track=war_event.incoming_track,
+                    )
+                    session.add(new_war)
+                    session.flush()
+
+                    for race in war_event.races:
+                        new_race = Race(
+                            war_event_id=new_war.id,
+                            game=race.game,
+                            race_number=race.race_number,
+                            track_name=race.track_name,
+                            home_score=race.home_score,
+                            enemy_score=race.enemy_score,
+                            score_diff=race.score_diff,
+                            positions=race.positions,
+                        )
+                        session.add(new_race)
+                session.commit()
+
+            embed.title = "War Stats Copied"
+            embed.description = f"All **{war_count}** wars have been copied from {source.mention} to {destination.mention}"
+        else:
+            embed.title = "Action Canceled"
+            embed.description = "Data remained unchanged"
+
+        return await interaction.edit_original_response(embed=embed, view=None)
+
+    @app_commands.command()
+    @app_commands.guild_only()
+    @app_commands.describe(
         channel="the channel you want to delete war from",
         war_id="the id of the war you want to delete",
     )
     async def delete(
         self,
         interaction: discord.Interaction,
-        channel: discord.TextChannel = None,
+        channel: discord.TextChannel | discord.Thread = None,
         war_id: str = None,
     ):
         """delete a war from the database, or all wars if no ID is provided"""
