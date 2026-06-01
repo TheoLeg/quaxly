@@ -52,8 +52,8 @@ def _load_world():
             pass
 
     url = (
-        "https://naciscdn.org/naturalearth/50m/cultural/"
-        "ne_50m_admin_0_countries.zip"
+        "https://naciscdn.org/naturalearth/10m/cultural/"
+        "ne_10m_admin_0_countries.zip"
     )
     _world_data = gpd.read_file(url)
     os.makedirs(CACHE_DIR, exist_ok=True)
