@@ -1,95 +1,129 @@
-"""Country map image generation with geopandas + matplotlib.
+"""Country map image generation.
 
-Natural Earth data is downloaded once and cached under data/quiz_map_cache.
+Renders with matplotlib only. The country borders are pulled at runtime as a
+lightweight GeoJSON (Natural Earth 50m) and cached under data/quiz_map_cache, so
+the image ships without the heavy geopandas/GDAL stack.
 """
 
 import asyncio
 import io
+import json
 import os
-import warnings
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import PatchCollection
+from matplotlib.patches import Polygon as MplPolygon
+
+GEOJSON_URL = (
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/"
+    "master/geojson/ne_50m_admin_0_countries.geojson"
+)
 
 _executor = ThreadPoolExecutor(max_workers=2)
-_world_data = None
+_features: list | None = None
 
 CACHE_DIR = os.path.join(os.getcwd(), "data", "quiz_map_cache")
-CACHE_FILE = os.path.join(CACHE_DIR, "countries.shp")
+CACHE_FILE = os.path.join(CACHE_DIR, "ne_50m_admin_0_countries.geojson")
 
-GEOPANDAS_ALIASES: dict[str, list[str]] = {
-    "Turkey": ["Turkey", "Türkiye"],
-    "S. Korea": ["S. Korea", "South Korea"],
-    "N. Korea": ["N. Korea", "North Korea"],
-    "Czechia": ["Czechia", "Czech Republic"],
-    "Macedonia": ["Macedonia", "North Macedonia"],
-    "United States of America": ["United States of America", "United States"],
-    "Dem. Rep. Congo": ["Dem. Rep. Congo", "Democratic Republic of the Congo"],
-    "Bosnia and Herz.": ["Bosnia and Herz.", "Bosnia and Herzegovina"],
+# Our country names follow Natural Earth's abbreviated NAME field; a few differ
+# between dataset revisions, so map those to what the 50m file actually uses.
+NAME_ALIASES: dict[str, list[str]] = {
+    "S. Korea": ["South Korea"],
+    "N. Korea": ["North Korea"],
+    "Macedonia": ["North Macedonia"],
+    "Turkey": ["Türkiye"],
 }
 
+_MATCH_FIELDS = ("NAME", "ADMIN", "NAME_LONG", "BRK_NAME", "NAME_EN")
 
-def _load_world():
-    global _world_data
-    if _world_data is not None:
-        return _world_data
 
-    import geopandas as gpd
+def _load_world() -> list:
+    global _features
+    if _features is not None:
+        return _features
 
     if os.path.exists(CACHE_FILE):
-        _world_data = gpd.read_file(CACHE_FILE)
-        return _world_data
+        with open(CACHE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        with urllib.request.urlopen(GEOJSON_URL, timeout=60) as resp:
+            raw = resp.read()
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(CACHE_FILE, "wb") as f:
+            f.write(raw)
+        data = json.loads(raw)
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        try:
-            _world_data = gpd.read_file(gpd.datasets.get_path("naturalearth_lowres"))
-            return _world_data
-        except Exception:
-            pass
-
-    url = "https://naciscdn.org/naturalearth/10m/cultural/ne_10m_admin_0_countries.zip"
-    _world_data = gpd.read_file(url)
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    _world_data.to_file(CACHE_FILE)
-    return _world_data
+    _features = data["features"]
+    return _features
 
 
-def _find_country(world, name: str):
-    result = world[world["NAME"] == name]
-    if not result.empty:
-        return result
-    for alias in GEOPANDAS_ALIASES.get(name, []):
-        result = world[world["NAME"] == alias]
-        if not result.empty:
-            return result
-    return world[world["NAME"].str.lower() == name.lower()]
+def _exterior_rings(geometry: dict):
+    """Yield each polygon's exterior ring as a list of [lon, lat] points."""
+    gtype = geometry["type"]
+    coords = geometry["coordinates"]
+    if gtype == "Polygon":
+        yield coords[0]
+    elif gtype == "MultiPolygon":
+        for polygon in coords:
+            yield polygon[0]
+
+
+def _find_country(features: list, name: str) -> dict | None:
+    targets = {name.lower(), *(a.lower() for a in NAME_ALIASES.get(name, []))}
+    for feature in features:
+        props = feature["properties"]
+        values = {
+            props[k].lower() for k in _MATCH_FIELDS if props.get(k)
+        }
+        if targets & values:
+            return feature
+    return None
 
 
 def _generate_map_sync(country_name_en: str) -> bytes:
-    world = _load_world()
-    target = _find_country(world, country_name_en)
-
-    if target.empty:
+    features = _load_world()
+    target = _find_country(features, country_name_en)
+    if target is None:
         raise ValueError(f"country '{country_name_en}' not found")
 
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.set_facecolor("#0d2137")
     fig.patch.set_facecolor("#06111e")
 
-    world.plot(ax=ax, color="#1e3d20", edgecolor="#3a6e3a", linewidth=0.35)
-    target.plot(ax=ax, color="#e63946", edgecolor="#ff8fa3", linewidth=1.5)
+    background = [
+        MplPolygon(ring, closed=True)
+        for feature in features
+        for ring in _exterior_rings(feature["geometry"])
+    ]
+    ax.add_collection(
+        PatchCollection(
+            background, facecolor="#1e3d20", edgecolor="#3a6e3a", linewidths=0.35
+        )
+    )
 
-    bounds = target.geometry.total_bounds
-    w = bounds[2] - bounds[0]
-    h = bounds[3] - bounds[1]
-    pad = max(w, h, 10.0) * 2.0
+    target_patches = []
+    xs: list[float] = []
+    ys: list[float] = []
+    for ring in _exterior_rings(target["geometry"]):
+        target_patches.append(MplPolygon(ring, closed=True))
+        for x, y in ring:
+            xs.append(x)
+            ys.append(y)
+    ax.add_collection(
+        PatchCollection(
+            target_patches, facecolor="#e63946", edgecolor="#ff8fa3", linewidths=1.5
+        )
+    )
 
-    xlim = (max(-180.0, bounds[0] - pad), min(180.0, bounds[2] + pad))
-    ylim = (max(-90.0, bounds[1] - pad), min(90.0, bounds[3] + pad))
+    minx, miny, maxx, maxy = min(xs), min(ys), max(xs), max(ys)
+    pad = max(maxx - minx, maxy - miny, 10.0) * 2.0
+    xlim = (max(-180.0, minx - pad), min(180.0, maxx + pad))
+    ylim = (max(-90.0, miny - pad), min(90.0, maxy + pad))
 
     xr = xlim[1] - xlim[0]
     yr = ylim[1] - ylim[0]
@@ -104,6 +138,7 @@ def _generate_map_sync(country_name_en: str) -> bytes:
 
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
+    ax.set_aspect("equal")
     ax.axis("off")
 
     buf = io.BytesIO()
