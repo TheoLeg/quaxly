@@ -86,7 +86,20 @@ def _generate_map_sync(country_name_en: str) -> bytes:
     world.plot(ax=ax, color="#1e3d20", edgecolor="#3a6e3a", linewidth=0.35)
     target.plot(ax=ax, color="#e63946", edgecolor="#ff8fa3", linewidth=1.5)
 
-    bounds = target.geometry.total_bounds
+    # Frame the view on the largest landmass, not the union of every part: many
+    # countries (France, USA, Chile, Ecuador…) have far-flung overseas
+    # territories whose total bounds would zoom the map out to the whole world.
+    polygons = []
+    for geom in target.geometry:
+        if geom is None:
+            continue
+        if geom.geom_type == "MultiPolygon":
+            polygons.extend(geom.geoms)
+        else:
+            polygons.append(geom)
+    main = max(polygons, key=lambda g: g.area)
+    bounds = main.bounds
+
     w = bounds[2] - bounds[0]
     h = bounds[3] - bounds[1]
     pad = max(w, h, 10.0) * 2.0
