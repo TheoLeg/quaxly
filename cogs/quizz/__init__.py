@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 
 import discord
 from discord import app_commands
@@ -7,21 +8,44 @@ from discord.ext import commands
 
 from cogs.quizz.session import QuizSession
 
-_TYPE_MAP = {
-    "all": ["flag", "capital", "map", "shape"],
-    "flags": ["flag"],
-    "capitals": ["capital"],
-    "maps": ["map"],
-    "shapes": ["shape"],
+# key -> (emoji, display name, internal question type)
+_BASE_TYPES = {
+    "flags": ("🚩", "Flags", "flag"),
+    "capitals": ("🏛️", "Capitals", "capital"),
+    "maps": ("🗺️", "Maps", "map"),
+    "shapes": ("🧩", "Shapes", "shape"),
 }
 
-_TYPE_LABELS = {
-    "all": "🌐 All types",
-    "flags": "🚩 Flags",
-    "capitals": "🏛️ Capitals",
-    "maps": "🗺️ Maps",
-    "shapes": "🧩 Shapes",
-}
+
+def _build_type_choices():
+    """Build every non-empty combination of categories dynamically.
+
+    Returns the slash-command choices plus lookup maps from a combination
+    value (e.g. "flags+maps") to its internal question types and its label.
+    """
+    keys = list(_BASE_TYPES)
+    choices: list[Choice] = []
+    type_map: dict[str, list[str]] = {}
+    label_map: dict[str, str] = {}
+
+    for size in range(1, len(keys) + 1):
+        for combo in itertools.combinations(keys, size):
+            value = "+".join(combo)
+            type_map[value] = [_BASE_TYPES[k][2] for k in combo]
+            if len(combo) == len(keys):
+                label = "🌐 All types"
+            else:
+                label = " ".join(
+                    f"{_BASE_TYPES[k][0]} {_BASE_TYPES[k][1]}" for k in combo
+                )
+            label_map[value] = label
+            choices.append(Choice(name=label, value=value))
+
+    return choices, type_map, label_map
+
+
+_TYPE_CHOICES, _TYPE_MAP, _TYPE_LABELS = _build_type_choices()
+_DEFAULT_TYPE = "+".join(_BASE_TYPES)
 
 _DIFF_LABELS = {
     "easy": "🟢 Easy",
@@ -39,18 +63,12 @@ class Quizz(commands.Cog):
     @app_commands.command(name="quiz")
     @app_commands.guild_only()
     @app_commands.describe(
-        type="kind of questions",
+        type="kind of questions (any combination of categories)",
         difficulty="how well-known the countries are",
         questions="number of questions (5-30)",
     )
     @app_commands.choices(
-        type=[
-            Choice(name="🌐 All types", value="all"),
-            Choice(name="🚩 Flags only", value="flags"),
-            Choice(name="🏛️ Capitals only", value="capitals"),
-            Choice(name="🗺️ Maps only", value="maps"),
-            Choice(name="🧩 Shapes only", value="shapes"),
-        ],
+        type=_TYPE_CHOICES,
         difficulty=[
             Choice(name="🟢 Easy (well-known countries)", value="easy"),
             Choice(name="🟡 Medium (less common countries)", value="medium"),
@@ -78,7 +96,7 @@ class Quizz(commands.Cog):
                 "missing send message permission in this channel", ephemeral=True
             )
 
-        type_value = type.value if type else "all"
+        type_value = type.value if type else _DEFAULT_TYPE
         difficulty_value = difficulty.value if difficulty else "easy"
         q_types = _TYPE_MAP[type_value]
 
@@ -96,9 +114,7 @@ class Quizz(commands.Cog):
 
         await asyncio.sleep(3)
 
-        session = QuizSession(
-            channel, self.bot, q_types, difficulty_value, questions
-        )
+        session = QuizSession(channel, self.bot, q_types, difficulty_value, questions)
         self.sessions[channel.id] = session
 
         task = asyncio.create_task(session.start())
