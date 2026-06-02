@@ -20,7 +20,10 @@ def _normalize(text: str) -> str:
 
 
 def _within_one_edit(a: str, b: str) -> bool:
-    """True if a and b differ by at most one insert, delete or substitution."""
+    """
+    True if a and b differ by at most one insert, delete or substitution.
+    <NOT USED FOR NOW>
+    """
     la, lb = len(a), len(b)
     if abs(la - lb) > 1:
         return False
@@ -42,6 +45,13 @@ def _within_one_edit(a: str, b: str) -> bool:
     return True
 
 
+def _within_dash_typo(a: str, b: str) -> bool:
+    """True if a and b are identical except for one having a dash where the other doesn't."""
+    if a.replace("-", " ") == b.replace("-", " ") and abs(len(a) - len(b)) <= 1:
+        return True
+    return False
+
+
 def _answer_matches(guess: str, accepted_norm: set[str]) -> bool:
     """Exact match, or one typo away (only for names long enough that a single
     edit can't collide with a different country, e.g. Iran/Iraq)."""
@@ -49,9 +59,7 @@ def _answer_matches(guess: str, accepted_norm: set[str]) -> bool:
         return True
     if len(guess) < 5:
         return False
-    return any(
-        len(ans) >= 5 and _within_one_edit(guess, ans) for ans in accepted_norm
-    )
+    return any(len(ans) >= 5 and _within_dash_typo(guess, ans) for ans in accepted_norm)
 
 
 def _progress_bar(current: int, total: int, width: int = 12) -> str:
