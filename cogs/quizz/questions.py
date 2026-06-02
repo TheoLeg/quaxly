@@ -92,10 +92,21 @@ def make_map_question(country: dict) -> dict:
     }
 
 
+def make_shape_question(country: dict) -> dict:
+    return {
+        "type": "shape",
+        "text": "Which country has this **shape**?",
+        "answer": _display_en(country),
+        "aliases": _country_aliases(country),
+        "country_en": country["en"],
+    }
+
+
 _MAKERS = {
     "flag": make_flag_question,
     "capital": make_capital_question,
     "map": make_map_question,
+    "shape": make_shape_question,
 }
 
 

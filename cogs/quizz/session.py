@@ -5,7 +5,7 @@ import unicodedata
 
 import discord
 
-from cogs.quizz.maps import generate_country_map
+from cogs.quizz.maps import generate_country_map, generate_country_shape
 from cogs.quizz.questions import generate_questions
 
 QUESTION_TIMEOUT = 15
@@ -17,6 +17,41 @@ MAX_INACTIVE_STREAK = 2
 def _normalize(text: str) -> str:
     nfkd = unicodedata.normalize("NFKD", text.lower().strip())
     return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    """True if a and b differ by at most one insert, delete or substitution."""
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la > lb:
+        a, b, la, lb = b, a, lb, la
+    i = j = 0
+    edited = False
+    while i < la and j < lb:
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+        else:
+            if edited:
+                return False
+            edited = True
+            if la == lb:
+                i += 1
+            j += 1
+    return True
+
+
+def _answer_matches(guess: str, accepted_norm: set[str]) -> bool:
+    """Exact match, or one typo away (only for names long enough that a single
+    edit can't collide with a different country, e.g. Iran/Iraq)."""
+    if guess in accepted_norm:
+        return True
+    if len(guess) < 5:
+        return False
+    return any(
+        len(ans) >= 5 and _within_one_edit(guess, ans) for ans in accepted_norm
+    )
 
 
 def _progress_bar(current: int, total: int, width: int = 12) -> str:
@@ -80,6 +115,13 @@ class QuizSession:
                 embed.set_image(url="attachment://map.png")
             except Exception as exc:
                 print(f"[quizz] map error: {exc}")
+        elif question["type"] == "shape":
+            try:
+                shape_io = await generate_country_shape(question["country_en"])
+                file = discord.File(shape_io, filename="shape.png")
+                embed.set_image(url="attachment://shape.png")
+            except Exception as exc:
+                print(f"[quizz] shape error: {exc}")
 
         await self.channel.send(embed=embed, file=file)
 
@@ -107,7 +149,7 @@ class QuizSession:
                     timeout=min(remaining, 1.0),
                 )
                 participated = True
-                if _normalize(reply.content) in accepted_norm:
+                if _answer_matches(_normalize(reply.content), accepted_norm):
                     correct_ids.add(reply.author.id)
                     correct_users.append(reply.author)
                     asyncio.create_task(reply.add_reaction("✅"))
@@ -144,7 +186,12 @@ class QuizSession:
         total = self.num_questions
         bar = _progress_bar(idx + 1, total)
 
-        type_to_color = {"flag": 0x3498DB, "capital": 0x9B59B6, "map": 0xE67E22}
+        type_to_color = {
+            "flag": 0x3498DB,
+            "capital": 0x9B59B6,
+            "map": 0xE67E22,
+            "shape": 0x1ABC9C,
+        }
         color = type_to_color.get(question["type"], 0x3498DB)
 
         embed = discord.Embed(

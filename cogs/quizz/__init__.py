@@ -8,10 +8,11 @@ from discord.ext import commands
 from cogs.quizz.session import QuizSession
 
 _TYPE_MAP = {
-    "all": ["flag", "capital", "map"],
+    "all": ["flag", "capital", "map", "shape"],
     "flags": ["flag"],
     "capitals": ["capital"],
     "maps": ["map"],
+    "shapes": ["shape"],
 }
 
 _TYPE_LABELS = {
@@ -19,6 +20,7 @@ _TYPE_LABELS = {
     "flags": "🚩 Flags",
     "capitals": "🏛️ Capitals",
     "maps": "🗺️ Maps",
+    "shapes": "🧩 Shapes",
 }
 
 _DIFF_LABELS = {
@@ -47,6 +49,7 @@ class Quizz(commands.Cog):
             Choice(name="🚩 Flags only", value="flags"),
             Choice(name="🏛️ Capitals only", value="capitals"),
             Choice(name="🗺️ Maps only", value="maps"),
+            Choice(name="🧩 Shapes only", value="shapes"),
         ],
         difficulty=[
             Choice(name="🟢 Easy (well-known countries)", value="easy"),

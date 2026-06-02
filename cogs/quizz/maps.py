@@ -72,6 +72,25 @@ def _find_country(world, name: str):
     return world[world["NAME"].str.lower() == name.lower()]
 
 
+def _mainland_bounds(target):
+    """Bounds of the country's largest landmass.
+
+    Many countries (France, USA, Chile, Ecuador…) have far-flung overseas
+    territories whose total bounds would zoom the map out to the whole world,
+    so frame on the single biggest polygon instead.
+    """
+    polygons = []
+    for geom in target.geometry:
+        if geom is None:
+            continue
+        if geom.geom_type == "MultiPolygon":
+            polygons.extend(geom.geoms)
+        else:
+            polygons.append(geom)
+    main = max(polygons, key=lambda g: g.area)
+    return main.bounds
+
+
 def _generate_map_sync(country_name_en: str) -> bytes:
     world = _load_world()
     target = _find_country(world, country_name_en)
@@ -86,20 +105,7 @@ def _generate_map_sync(country_name_en: str) -> bytes:
     world.plot(ax=ax, color="#1e3d20", edgecolor="#3a6e3a", linewidth=0.35)
     target.plot(ax=ax, color="#e63946", edgecolor="#ff8fa3", linewidth=1.5)
 
-    # Frame the view on the largest landmass, not the union of every part: many
-    # countries (France, USA, Chile, Ecuador…) have far-flung overseas
-    # territories whose total bounds would zoom the map out to the whole world.
-    polygons = []
-    for geom in target.geometry:
-        if geom is None:
-            continue
-        if geom.geom_type == "MultiPolygon":
-            polygons.extend(geom.geoms)
-        else:
-            polygons.append(geom)
-    main = max(polygons, key=lambda g: g.area)
-    bounds = main.bounds
-
+    bounds = _mainland_bounds(target)
     w = bounds[2] - bounds[0]
     h = bounds[3] - bounds[1]
     pad = max(w, h, 10.0) * 2.0
@@ -122,6 +128,38 @@ def _generate_map_sync(country_name_en: str) -> bytes:
     ax.set_ylim(ylim)
     ax.axis("off")
 
+    return _save_png(fig)
+
+
+def _generate_shape_sync(country_name_en: str) -> bytes:
+    """Render only the country's silhouette — no surrounding world, tightly
+    framed on its mainland so just the recognizable shape is shown."""
+    world = _load_world()
+    target = _find_country(world, country_name_en)
+
+    if target.empty:
+        raise ValueError(f"country '{country_name_en}' not found")
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.set_facecolor("#06111e")
+    fig.patch.set_facecolor("#06111e")
+
+    target.plot(ax=ax, color="#e8eef2", edgecolor="#9fb3c8", linewidth=1.0)
+
+    bounds = _mainland_bounds(target)
+    w = bounds[2] - bounds[0]
+    h = bounds[3] - bounds[1]
+    margin = max(w, h, 1.0) * 0.12
+
+    ax.set_xlim(bounds[0] - margin, bounds[2] + margin)
+    ax.set_ylim(bounds[1] - margin, bounds[3] + margin)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    return _save_png(fig)
+
+
+def _save_png(fig) -> bytes:
     buf = io.BytesIO()
     plt.savefig(
         buf,
@@ -140,5 +178,13 @@ async def generate_country_map(country_name_en: str) -> io.BytesIO:
     loop = asyncio.get_event_loop()
     img_bytes = await loop.run_in_executor(
         _executor, _generate_map_sync, country_name_en
+    )
+    return io.BytesIO(img_bytes)
+
+
+async def generate_country_shape(country_name_en: str) -> io.BytesIO:
+    loop = asyncio.get_event_loop()
+    img_bytes = await loop.run_in_executor(
+        _executor, _generate_shape_sync, country_name_en
     )
     return io.BytesIO(img_bytes)
