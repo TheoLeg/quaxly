@@ -5,6 +5,7 @@ Natural Earth data is downloaded once and cached under data/quiz_map_cache.
 
 import asyncio
 import io
+import math
 import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -72,13 +73,7 @@ def _find_country(world, name: str):
     return world[world["NAME"].str.lower() == name.lower()]
 
 
-def _mainland_bounds(target):
-    """Bounds of the country's largest landmass.
-
-    Many countries (France, USA, Chile, Ecuador…) have far-flung overseas
-    territories whose total bounds would zoom the map out to the whole world,
-    so frame on the single biggest polygon instead.
-    """
+def _polygons(target):
     polygons = []
     for geom in target.geometry:
         if geom is None:
@@ -87,8 +82,49 @@ def _mainland_bounds(target):
             polygons.extend(geom.geoms)
         else:
             polygons.append(geom)
+    return polygons
+
+
+def _mainland_bounds(target):
+    """Bounds of the country's largest landmass.
+
+    Many countries (France, USA, Chile, Ecuador…) have far-flung overseas
+    territories whose total bounds would zoom the map out to the whole world,
+    so frame on the single biggest polygon instead.
+    """
+    return max(_polygons(target), key=lambda g: g.area).bounds
+
+
+def _cluster_geoms(target):
+    """The country's main national landmass: the largest polygon plus every
+    nearby one (Denmark's isles, Corsica, Sicily…), but not far-flung overseas
+    territories (Alaska, Easter Island, Bornholm…). Returns the kept polygons
+    and their combined bounds so only a clean, fully-framed silhouette shows.
+    """
+    polygons = _polygons(target)
     main = max(polygons, key=lambda g: g.area)
-    return main.bounds
+    cb = list(main.bounds)
+    gap = min(max(cb[2] - cb[0], cb[3] - cb[1], 1.0) * 0.5, 3.0)
+
+    cluster = [main]
+    remaining = [p for p in polygons if p is not main]
+    changed = True
+    while changed:
+        changed = False
+        still = []
+        for p in remaining:
+            b = p.bounds
+            dx = max(cb[0] - b[2], b[0] - cb[2], 0.0)
+            dy = max(cb[1] - b[3], b[1] - cb[3], 0.0)
+            if dx <= gap and dy <= gap:
+                cluster.append(p)
+                cb = [min(cb[0], b[0]), min(cb[1], b[1]),
+                      max(cb[2], b[2]), max(cb[3], b[3])]
+                changed = True
+            else:
+                still.append(p)
+        remaining = still
+    return cluster, tuple(cb)
 
 
 def _generate_map_sync(country_name_en: str) -> bytes:
@@ -140,20 +176,29 @@ def _generate_shape_sync(country_name_en: str) -> bytes:
     if target.empty:
         raise ValueError(f"country '{country_name_en}' not found")
 
+    import geopandas as gpd
+
+    cluster, bounds = _cluster_geoms(target)
+
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.set_facecolor("#06111e")
     fig.patch.set_facecolor("#06111e")
 
-    target.plot(ax=ax, color="#e8eef2", edgecolor="#9fb3c8", linewidth=1.0)
+    gpd.GeoSeries(cluster, crs=target.crs).plot(
+        ax=ax, color="#e8eef2", edgecolor="#9fb3c8", linewidth=1.0
+    )
 
-    bounds = _mainland_bounds(target)
     w = bounds[2] - bounds[0]
     h = bounds[3] - bounds[1]
     margin = max(w, h, 1.0) * 0.12
 
     ax.set_xlim(bounds[0] - margin, bounds[2] + margin)
     ax.set_ylim(bounds[1] - margin, bounds[3] + margin)
-    ax.set_aspect("equal")
+    # A degree of longitude is shorter than a degree of latitude away from the
+    # equator; correct the aspect by cos(latitude) so shapes aren't stretched
+    # sideways (Denmark, Iceland, the Nordics…).
+    mid_lat = (bounds[1] + bounds[3]) / 2
+    ax.set_aspect(1 / max(math.cos(math.radians(mid_lat)), 0.1))
     ax.axis("off")
 
     return _save_png(fig)
