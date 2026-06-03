@@ -1,4 +1,4 @@
-"""Question generation. Answers are English-first; French names are accepted as aliases."""
+"""Question generation. Answers are English-first; French names are accepted as aliases"""
 
 import random
 
@@ -7,7 +7,6 @@ from cogs.quizz.countries import (
     COUNTRIES,
     COUNTRY_ALIASES,
 )
-
 
 # The "en" field matches geopandas naming (used for map lookups). A few of
 # those are abbreviations that read poorly as a shown answer, so override them.
